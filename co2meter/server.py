@@ -2,6 +2,8 @@
 
     (c) Vladimir Filimonov, 2018
     E-mail: vladimir.a.filimonov@gmail.com
+    Redacted by Pol Smith, 2019
+    @trenerok
 """
 import optparse
 import logging
@@ -10,6 +12,9 @@ import time
 import glob
 import os
 import socket
+import datetime as dt
+import telebot
+from telebot import types
 import signal
 import json
 
@@ -30,13 +35,20 @@ _DEFAULT_INTERVAL = 30  # seconds
 _DEFAULT_NAME = 'co2'
 _INIT_TIME = 30  # time to initialize and calibrate device
 _URL = 'https://github.com/vfilimonov/co2meter'
+_URL_IMAGES = 'https://user-images.githubusercontent.com/'
 
 _COLORS = {'r': '#E81F2E', 'y': '#FAAF4C', 'g': '#7FB03F'}
+_COLORS_HUMAN = {'r': 'red', 'y': 'yellow', 'g': 'green'}
+
 _IMG_G = '1324881/36358454-d707e2f4-150e-11e8-9bd1-b479e232f28f'
 _IMG_Y = '1324881/36358456-d8b513ba-150e-11e8-91eb-ade37733b19e'
-_IMG_R = '1324881/36358457-da3e3e8c-150e-11e8-85af-855571275d88'
+_IMG_R = '18612132/73597400-9e098600-453c-11ea-8d97-31c1ad7d5fe3'
 _RANGE_MID = [800, 1200]
 _CO2_MAX_VALUE = 3200  # Cut our yaxis here
+##
+_SEND_TELEGRAM = True
+_TELEGRAM_BOT_KEY = "telegram bot token here"
+_ALERT_TIME_GAP_SECOND = 360
 
 _name = _DEFAULT_NAME
 
@@ -229,6 +241,49 @@ def dashboard_plotly():
 #############################################################################
 # Monitoring routines
 #############################################################################
+
+
+def now():
+    return dt.datetime.now().replace(microsecond=0)
+
+
+def opendatetime():
+    try:
+        f = open('logs/' + 'lastdatetime.log', 'r')
+        data = f.readline()
+        result = json.loads(data)
+        f.close()
+        return result
+    except Exception as err:
+        logging.info('Something goes wrong [%s]' % str(err))
+
+
+def savedatetime(last_ivent):
+    try:
+        f = open('logs/' + 'lastdatetime.log', 'w')
+        nowdatetime = str(dt.datetime.utcnow().timestamp())
+        result = {"datetime": nowdatetime, "last_event": last_ivent}
+        f.write(json.dumps(result) + "\n")
+        f.close()
+        return result
+    except Exception as err:
+        logging.info('Something goes wrong [%s]' % str(err))
+
+def send_telegram(data):
+    bot = telebot.TeleBot(_TELEGRAM_BOT_KEY)
+    keyboard = types.InlineKeyboardMarkup()
+
+    try:
+        savedatetime(data.get('color'))
+        bot.send_photo(-280116721, photo=data.get('img'),
+                       parse_mode='HTML',
+                       caption="<b>CO2 Monitor</b>" + '\n' + str(data.get('data')) + '\n' + '\n' \
+                            "<b>timestamp: </b>" + str(dt.datetime.now().__format__('%Y-%m-%dT%H:%M:%S')) + '\n' + '\n', reply_markup=keyboard)
+        logging.info('telegram send DONE')
+    except Exception as err:
+        logging.info('- Error send events  to Telegram, error - [%s]' % str(err))
+
+
 def read_logs(name=None):
     """ read log files """
     if name is None:
@@ -277,6 +332,24 @@ def read_co2_data():
 
 def monitoring_CO2(interval):
     """ Tread for monitoring / logging """
+
+    def send_notify(result):
+        possible = True
+        if os.path.isfile('logs/' + 'lastdatetime.log'):
+            current_datetime = dt.datetime.utcnow().timestamp()
+            last_datetime = opendatetime().get('datetime') ####need check
+            timedelta = float(current_datetime) - float(last_datetime)
+            #print('Timedalta in seconds: ' + str(timedelta))
+            if timedelta < float(_ALERT_TIME_GAP_SECOND):
+                #print("It's not time yet.. Spend less than %s seconds.." % (
+                    #str(_ALERT_TIME_GAP_SECOND)))
+                possible = False
+
+        result['data'] = "Current CO2 level: <b>" + str(result.get('co2')) + "</b> PPM" + "\n" \
+        "Temperature: <b>" + str(result.get('temp')) + "</b> degree"
+
+        return send_telegram(result) if possible is True else None
+
     while _monitoring:
         # Request concentration and temperature
         vals = read_co2_data()
@@ -286,6 +359,38 @@ def monitoring_CO2(interval):
             # Write to log and sleep
             logging.info('[%s] %d ppm, %.1f deg C' % tuple(vals))
             write_to_log(vals)
+
+            #####telegram handler
+            if _SEND_TELEGRAM:
+                result = {'co2': vals[1], 'temp': format(vals[2], '.1f'), 'timestamp': now()}
+
+                ## Select image and color for telegram
+                if int(vals[1]) >= _RANGE_MID[1]:
+                    color = _COLORS_HUMAN['r']
+                    img = _IMG_R
+                    result['img'] = _URL_IMAGES + img + '.jpg'
+                    result['color'] = color
+                    send_notify(result)
+
+                elif int(vals[1]) < _RANGE_MID[0]:
+                    color = _COLORS_HUMAN['g']
+                    img = _IMG_G
+                    result['img'] = _URL_IMAGES + img + '.jpg'
+                    result['color'] = color
+                    ##send notify only if last event was red
+                    if os.path.isfile('logs/' + 'lastdatetime.log'):
+                        last_event = opendatetime().get('last_event')
+                        if last_event == 'red':
+                            send_notify(result)
+
+                else:
+                    color = _COLORS_HUMAN['y']
+                    img = _IMG_Y
+                    result['img'] = _URL_IMAGES + img + '.jpg'
+                    result['color'] = color
+                    ##test for yellow delete this
+                    #send_notify(result)
+
         # Sleep for the next call
         time.sleep(interval)
 
