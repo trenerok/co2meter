@@ -288,9 +288,16 @@ def read_logs(name=None):
     """ read log files """
     if name is None:
         name = _name
-    with open(os.path.join('logs', name + '.csv'), 'r') as f:
-        data = f.read()
-    return data
+    fname = os.path.join('logs', _name + '.csv')
+    if not os.path.exists('logs'):
+        os.makedirs('logs')
+    if not os.path.isfile(fname):
+        with open(fname, 'a') as f:
+            f.write('timestamp,co2,temp\n')
+    else:
+        with open(os.path.join('logs', name + '.csv'), 'r') as f:
+            data = f.read()
+        return data
 
 
 #############################################################################
