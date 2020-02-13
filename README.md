@@ -35,6 +35,7 @@ For installation of `hidapi` package [Microsoft Visual C++ Compiler for Python](
 Then installation of `co2meter` could be done via the `pip` utility:
 
 	pip install hidapi co2meter
+	pip install pyTelegramBotAPI
 
 Optionally, if [pandas package](http://pandas.pydata.org/) is available then the data will be retrieved as pandas.DataFrames rather than list of tuples.
 
